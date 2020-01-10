@@ -21,20 +21,19 @@ app.get('/', (req, res) => {
 // Schema
 const Schema = mongoose.Schema;
 
-const UserSchema = new Schema({ username: String });
-
-const ExerciseSchema = new Schema({
-	userId: String,
-	description: String,
-	duration: String,
-	date: String
+const UserSchema = new Schema({
+	username: String,
+	exercises: [
+		{
+			description: String,
+			duration: Number,
+			date: Date
+		}
+	]
 });
 
 // Model
-const model = mongoose.model;
-
-const UserModel = model('User', UserSchema);
-const ExerciseModel = model('Exercise', ExerciseSchema);
+const UserModel = mongoose.model('User', UserSchema);
 
 // I can create a user by posting form data username to /api/exercise/new-user and returned
 // will be an object with username and _id.
@@ -67,7 +66,13 @@ app.get('/api/exercise/users', (req, res) => {
 // App will return the user object with the exercise fields added.
 app.post('/api/exercise/add', (req, res) => {
 	const { userId, description, duration, date } = req.body;
-	res.json({ userId, description, duration, date });
+	const options = { new: true };
+	UserModel.findByIdAndUpdate(
+		userId,
+		{ $push: { exercises: { description, duration, date: date || new Date() } } },
+		options,
+		(err, user) => (err ? res.json(err) : res.json(user))
+	);
 });
 
 // 1) I can retrieve a full exercise log of any user by getting /api/exercise/log with a
@@ -75,9 +80,41 @@ app.post('/api/exercise/add', (req, res) => {
 // (total exercise count).
 // 2) I can retrieve part of the log of any user by also passing along optional parameters
 // of from & to or limit. (Date format yyyy-mm-dd, limit = int)
-app.get('/api/exercise/log?{userId}[&from][&to][&limit]', (req, res) => {
-	console.log('GET exercise log endpoint');
-	res.json({ message: 'GET exercise log endpoint' });
+app.get('/api/exercise/log', (req, res) => {
+	const { userId, from, to, limit } = req.query;
+	if (!userId) {
+		res.json({
+			error:
+				"Must include a user ID in the query string. Example: '/api/exercise/log?userId={userId}'"
+		});
+	} else if (!from && !to && !limit) {
+		UserModel.findById(userId, (err, user) => (err ? res.json(err) : res.json(user)));
+	} else {
+		UserModel.findById(userId, (err, user) => {
+			if (err) res.json(err);
+			// retrieve part of the log
+			const { username, exercises } = user;
+			const filteredExercises = exercises.filter(i => {
+				const exerciseDate = new Date(i.date).getTime();
+				let fromDate, toDate;
+				if (from && to) {
+					fromDate = new Date(from).getTime();
+					toDate = new Date(to).getTime();
+					if (exerciseDate > fromDate && exerciseDate < toDate) return i;
+				} else if (from) {
+					fromDate = new Date(from).getTime();
+					if (exerciseDate > fromDate) return i;
+				} else if (to) {
+					toDate = new Date(to).getTime();
+					if (exerciseDate < toDate) return i;
+				} else {
+					return i;
+				}
+			});
+			const limitedExercises = filteredExercises.slice(0, limit || filteredExercises.length);
+			res.json({ username, exercises: limitedExercises });
+		});
+	}
 });
 
 // Not found middleware
